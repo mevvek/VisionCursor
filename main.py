@@ -1,6 +1,7 @@
 """
-main.py - Phase 6: Precision Head Cursor + Pure Blink Detection
-Strict Phase 6 rule: Detects and measures blinks with ZERO mouse clicking.
+main.py - Dual Intentional Gesture Telemetry Engine
+Recognizes both Single Intentional Blink and Double Intentional Blink.
+Stateless and Auto-Resetting. Strictly NO mouse clicking executed.
 """
 
 import sys
@@ -13,7 +14,8 @@ from config.settings import CONFIG
 from camera.camera_manager import CameraManager
 from vision.face_tracker import FaceTracker
 from control.cursor_controller import CursorController
-from gestures.blink_detector import BlinkDetector, BlinkEvent
+from gestures.blink_detector import BlinkDetector, BlinkEvent, LEFT_EYE_INDICES, RIGHT_EYE_INDICES
+from gestures.gesture_recognizer import GestureRecognizer, GestureResult
 
 FACE_OVAL_IDX = [
     10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400,
@@ -37,9 +39,10 @@ def get_direction_label(dx: float, dy: float, deadzone: float = 0.015) -> str:
         return "DOWN" if dy > 0 else "UP"
 
 def draw_hud(frame, fps: float, cursor_active: bool, cursor_pos: tuple,
-             direction: str, blink_evt: BlinkEvent, last_blink_time: float, last_blink_dur: float):
+             direction: str, blink_evt: BlinkEvent, gesture_res: GestureResult,
+             last_confirmed_action: str, last_action_time: float):
     overlay = frame.copy()
-    x1, y1, x2, y2 = 14, 14, 360, 260
+    x1, y1, x2, y2 = 14, 14, 385, 295
 
     cv2.rectangle(overlay, (x1, y1), (x2, y2), (10, 12, 16), -1)
     cv2.addWeighted(overlay, 0.82, frame, 0.18, 0, frame)
@@ -50,42 +53,53 @@ def draw_hud(frame, fps: float, cursor_active: bool, cursor_pos: tuple,
     cv2.line(frame, (x2, y1), (x2 - c_len, y1), c_color, 2)
     cv2.line(frame, (x2, y1), (x2, y1 + c_len), c_color, 2)
     cv2.line(frame, (x1, y2), (x1 + c_len, y2), c_color, 2)
-    cv2.line(frame, (x1, y2), (x1, y2 - c_len), c_color, 2)
+    cv2.line(frame, (x1, y2), (x1 - c_len, y2), c_color, 2)
     cv2.line(frame, (x2, y2), (x2 - c_len, y2), c_color, 2)
     cv2.line(frame, (x2, y2), (x2, y2 - c_len), c_color, 2)
 
-    cv2.putText(frame, "VISION CURSOR // PHASE 6", (26, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 1)
+    cv2.putText(frame, "VISION CURSOR // SYS.ONLINE", (26, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 1)
     fps_color = (0, 255, 120) if fps >= 25 else (0, 165, 255)
     cv2.putText(frame, f"FPS: {fps:.1f}", (26, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.44, fps_color, 1)
 
     dir_color = (0, 255, 255) if direction == "CENTER" else (0, 180, 255)
     cv2.putText(frame, f"GAZE: {direction}", (26, 84), cv2.FONT_HERSHEY_SIMPLEX, 0.60, dir_color, 2)
     cx, cy = cursor_pos
-    cv2.putText(frame, f"CURSOR : ({cx}, {cy}) px", (26, 108), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 200), 1)
+    cv2.putText(frame, f"CURSOR: ({cx}, {cy}) px", (26, 108), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 200), 1)
 
     # EAR Telemetry
     ear_str = f"L:{blink_evt.left_ear:.2f} | R:{blink_evt.right_ear:.2f} | AVG:{blink_evt.average_ear:.2f}"
     cv2.putText(frame, f"EAR : {ear_str}", (26, 132), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
-
     state_color = (0, 255, 120) if blink_evt.eye_state == "OPEN" else (0, 0, 255)
-    cv2.putText(frame, f"EYE STATE: {blink_evt.eye_state}", (26, 156), cv2.FONT_HERSHEY_SIMPLEX, 0.46, state_color, 1)
+    cv2.putText(frame, f"EYE STATE: {blink_evt.eye_state}", (26, 154), cv2.FONT_HERSHEY_SIMPLEX, 0.44, state_color, 1)
 
-    # Phase 6 Blink Flash Alert (Strictly NO Click)
-    now = time.time()
-    is_recent_blink = (now - last_blink_time) < 0.45
-    if is_recent_blink:
-        cv2.putText(frame, f"BLINK: DETECTED ({last_blink_dur:.2f}s)", (26, 184),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 255, 255), 2)
+    # Live Gesture State
+    if gesture_res.state == "WAITING FOR 2ND BLINK":
+        state_txt = f"WAITING FOR 2ND BLINK ({gesture_res.time_remaining:.2f}s)"
+        s_color = (0, 215, 255)
     else:
-        cv2.putText(frame, "BLINK: READY (No Action)", (26, 184),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 140, 140), 1)
+        state_txt = "WAITING FOR 1ST BLINK (READY)"
+        s_color = (160, 160, 160)
+    cv2.putText(frame, f"GESTURE: {state_txt}", (26, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.42, s_color, 1)
+
+    # Confirmation Alert (Flashes for 0.4s then auto-resets)
+    now = time.monotonic()
+    if (now - last_action_time) < 0.45:
+        if last_confirmed_action == "SINGLE_CONFIRMED":
+            cv2.putText(frame, ">> SINGLE BLINK CONFIRMED <<", (26, 210),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 2)
+        elif last_confirmed_action == "DOUBLE_CONFIRMED":
+            cv2.putText(frame, ">> DOUBLE BLINK CONFIRMED <<", (26, 210),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 255), 2)
+    else:
+        cv2.putText(frame, "ACTION: ZERO CLICK (Detected Only)", (26, 210),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (120, 140, 150), 1)
 
     status_text = "ENGAGED" if cursor_active else "STANDBY"
     status_color = (0, 255, 120) if cursor_active else (0, 140, 255)
-    cv2.circle(frame, (32, 212), 4, status_color, -1)
-    cv2.putText(frame, f"MOUSE: {status_text}", (44, 216), cv2.FONT_HERSHEY_SIMPLEX, 0.44, status_color, 1)
+    cv2.circle(frame, (32, 240), 4, status_color, -1)
+    cv2.putText(frame, f"MOUSE: {status_text}", (44, 244), cv2.FONT_HERSHEY_SIMPLEX, 0.44, status_color, 1)
 
-    cv2.putText(frame, "[E] Toggle | [C] Recenter | [Q] Exit", (26, 244),
+    cv2.putText(frame, "[E] Toggle | [C] Recenter | [Q] Exit", (26, 276),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 150, 160), 1)
 
 def draw_sci_fi_visuals(frame, tracking_res):
@@ -107,10 +121,10 @@ def draw_sci_fi_visuals(frame, tracking_res):
 
     cv2.addWeighted(mesh_overlay, 0.45, frame, 0.55, 0, frame)
 
-    if tracking_res.left_eye:
-        cv2.polylines(frame, [tracking_res.left_eye.contour_points], True, (255, 255, 0), 1)
-    if tracking_res.right_eye:
-        cv2.polylines(frame, [tracking_res.right_eye.contour_points], True, (255, 255, 0), 1)
+    left_eye_pts = np.array([pts[i] for i in LEFT_EYE_INDICES], dtype=np.int32)
+    right_eye_pts = np.array([pts[i] for i in RIGHT_EYE_INDICES], dtype=np.int32)
+    cv2.polylines(frame, [left_eye_pts], True, (255, 255, 0), 1)
+    cv2.polylines(frame, [right_eye_pts], True, (255, 255, 0), 1)
 
     for iris in [tracking_res.left_iris, tracking_res.right_iris]:
         if iris:
@@ -131,7 +145,7 @@ def draw_sci_fi_visuals(frame, tracking_res):
 
 def main():
     print("=" * 60)
-    print("VisionCursor: Phase 6 (Pure Blink Detection - NO CLICK)")
+    print("VisionCursor: Dual Gesture Disambiguation Loaded")
     print("=" * 60)
 
     screen_w, screen_h = pyautogui.size()
@@ -143,15 +157,21 @@ def main():
     )
 
     if not cam.start():
-        print("[ERROR] Camera failed to start.")
+        print("[ERROR] Camera failed to initialize.")
         sys.exit(1)
 
     tracker = FaceTracker()
     cursor_ctrl = CursorController(screen_w, screen_h)
     blink_detector = BlinkDetector()
+    gesture_recognizer = GestureRecognizer()
 
-    last_blink_time = 0.0
-    last_blink_dur = 0.0
+    last_confirmed_action = "NONE"
+    last_action_time = 0.0
+
+    print("\n[READY FOR TESTING]:")
+    print("  - Single Deliberate Blink -> Waits 0.6s -> SINGLE BLINK CONFIRMED -> Resets.")
+    print("  - Double Deliberate Blink -> Detects 2nd blink -> DOUBLE BLINK CONFIRMED -> Resets.")
+    print("  - Mouse clicks remain disabled.\n")
 
     try:
         while True:
@@ -159,13 +179,14 @@ def main():
             if not success:
                 break
 
+            now = time.monotonic()
             tracking_res = tracker.process_frame(frame)
 
             final_x, final_y = pyautogui.position()
             norm_x, norm_y = 0.5, 0.5
             direction = "CENTER"
 
-            # 1. Stabilized Head Cursor Navigation
+            # 1. Cursor Navigation
             if tracking_res.face_detected and tracking_res.nose_point:
                 norm_x, norm_y = tracking_res.nose_point
                 final_x, final_y = cursor_ctrl.update_position(tracking_res.nose_point)
@@ -175,23 +196,27 @@ def main():
                     dy = norm_y - cursor_ctrl.center_y
                     direction = get_direction_label(dx, dy)
 
-            # 2. Phase 6 Blink Detection (Measurement Only, NO CLICK)
-            left_cnt = tracking_res.left_eye.contour_points if tracking_res.left_eye else None
-            right_cnt = tracking_res.right_eye.contour_points if tracking_res.right_eye else None
-            blink_evt = blink_detector.update(left_cnt, right_cnt)
+            # 2. Blink Detection
+            landmarks = tracking_res.raw_pixel_landmarks
+            blink_evt = blink_detector.update_with_landmarks(landmarks, timestamp=now)
 
-            if blink_evt.blink_detected:
-                last_blink_time = blink_evt.blink_timestamp
-                last_blink_dur = blink_evt.blink_duration
-                # STRICT PHASE 6: Log only, ZERO mouse action!
-                print(f"[BLINK EVENT DETECTED] Duration: {blink_evt.blink_duration:.2f}s | EAR: {blink_evt.average_ear:.2f} (NO CLICK)")
+            # 3. Dual Gesture Recognizer
+            gesture_res = gesture_recognizer.update(blink_evt, current_time=now)
 
-            # Visuals & HUD
+            if gesture_res.action != "NONE":
+                last_confirmed_action = gesture_res.action
+                last_action_time = now
+                if gesture_res.action == "SINGLE_CONFIRMED":
+                    print("[GESTURE] SINGLE BLINK CONFIRMED (Timeout passed - Ready for Next)")
+                elif gesture_res.action == "DOUBLE_CONFIRMED":
+                    print(f"[GESTURE] DOUBLE BLINK CONFIRMED ({gesture_res.interval:.2f}s interval - Ready for Next)")
+
+            # Render
             frame = draw_sci_fi_visuals(frame, tracking_res)
             draw_hud(frame, cam.current_fps, cursor_ctrl.is_enabled, (final_x, final_y),
-                     direction, blink_evt, last_blink_time, last_blink_dur)
+                     direction, blink_evt, gesture_res, last_confirmed_action, last_action_time)
 
-            cv2.imshow("VisionCursor - Phase 6", frame)
+            cv2.imshow("VisionCursor - Sys.Gaze Recognizer", frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key in [27, ord('q')]:
@@ -208,7 +233,7 @@ def main():
         tracker.close()
         cam.release()
         cv2.destroyAllWindows()
-        print("\n[SUCCESS] Phase 6 safely terminated.")
+        print("\n[SUCCESS] Terminated safely.")
 
 if __name__ == "__main__":
     main()

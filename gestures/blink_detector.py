@@ -1,117 +1,88 @@
 """
 gestures/blink_detector.py
-Calculates Eye Aspect Ratio (EAR) and uses a state machine to detect
-clean, single, duration-measured blink events.
-Strictly NO mouse clicking or action execution.
+Calculates Eye Aspect Ratio (EAR) directly from standard MediaPipe face mesh landmarks.
 """
 
 import time
 import math
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-import numpy as np
 from config.settings import CONFIG
 
 @dataclass
 class BlinkEvent:
     blink_detected: bool = False
-    eye_state: str = "OPEN"           # "OPEN" or "CLOSED"
+    eye_state: str = "OPEN"
     left_ear: float = 0.0
     right_ear: float = 0.0
     average_ear: float = 0.0
     blink_duration: float = 0.0
     blink_timestamp: float = 0.0
 
+LEFT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
+RIGHT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
+
 class BlinkDetector:
-    """
-    Eye Aspect Ratio (EAR) based blink detector.
-    Tracks state transitions: OPEN -> CLOSING/CLOSED -> OPENING -> BLINK_EVENT.
-    """
     def __init__(self):
         cfg = getattr(CONFIG, "eye", None)
-        self.closed_threshold = getattr(cfg, "ear_closed_threshold", 0.20)
-        self.open_threshold = getattr(cfg, "ear_open_threshold", 0.24)
-        self.min_duration = getattr(cfg, "min_blink_duration", 0.06)
-        self.max_duration = getattr(cfg, "max_blink_duration", 0.45)
-        self.cooldown = getattr(cfg, "blink_cooldown", 0.15)
-        self.both_eyes_required = getattr(cfg, "both_eyes_required", True)
+        self.closed_threshold = getattr(cfg, "ear_closed_threshold", 0.21)
+        self.open_threshold = getattr(cfg, "ear_open_threshold", 0.25)
+        self.min_duration = getattr(cfg, "min_blink_duration", 0.05)
+        self.max_duration = getattr(cfg, "max_blink_duration", 0.65)
+        self.cooldown = getattr(cfg, "blink_cooldown", 0.12)
 
         self.eye_state = "OPEN"
         self.closed_start_time: Optional[float] = None
         self.last_blink_time: float = 0.0
 
     @staticmethod
-    def calculate_ear(eye_contour: Optional[np.ndarray]) -> float:
-        """
-        Calculates Eye Aspect Ratio (EAR) from eyelid points:
-        EAR = (|p2 - p6| + |p3 - p5|) / (2 * |p1 - p4|)
-        """
-        if eye_contour is None or len(eye_contour) < 6:
+    def _compute_ear_from_indices(landmarks: List[Tuple[int, int]], indices: List[int]) -> float:
+        if len(landmarks) < 468:
             return 0.30
 
-        pts = eye_contour
-        
-        # Horizontal width (corners)
-        p1 = pts[0]
-        p4 = pts[3] if len(pts) > 3 else pts[-1]
+        p1 = landmarks[indices[0]]
+        p2 = landmarks[indices[1]]
+        p3 = landmarks[indices[2]]
+        p4 = landmarks[indices[3]]
+        p5 = landmarks[indices[4]]
+        p6 = landmarks[indices[5]]
+
         width = math.hypot(p1[0] - p4[0], p1[1] - p4[1])
-        if width <= 0:
+        if width <= 1e-4:
             return 0.30
 
-        # Vertical heights
-        if len(pts) >= 6:
-            p2 = pts[1]
-            p6 = pts[5]
-            p3 = pts[2]
-            p5 = pts[4]
-            h1 = math.hypot(p2[0] - p6[0], p2[1] - p6[1])
-            h2 = math.hypot(p3[0] - p5[0], p3[1] - p5[1])
-            ear = (h1 + h2) / (2.0 * width)
-        else:
-            min_y = float(np.min(pts[:, 1]))
-            max_y = float(np.max(pts[:, 1]))
-            ear = (max_y - min_y) / width
+        h1 = math.hypot(p2[0] - p6[0], p2[1] - p6[1])
+        h2 = math.hypot(p3[0] - p5[0], p3[1] - p5[1])
 
-        return float(ear)
+        return float((h1 + h2) / (2.0 * width))
 
-    def update(self, left_contour: Optional[np.ndarray], right_contour: Optional[np.ndarray], timestamp: Optional[float] = None) -> BlinkEvent:
-        """
-        Processes current frame contours and updates blink state machine.
-        Returns a single BlinkEvent per closure cycle.
-        """
-        now = timestamp or time.time()
+    def update_with_landmarks(self, landmarks: Optional[List[Tuple[int, int]]], timestamp: Optional[float] = None) -> BlinkEvent:
+        now = timestamp or time.monotonic()
 
-        left_ear = self.calculate_ear(left_contour) if left_contour is not None else 0.30
-        right_ear = self.calculate_ear(right_contour) if right_contour is not None else 0.30
+        if not landmarks or len(landmarks) < 468:
+            return BlinkEvent(eye_state="OPEN", left_ear=0.30, right_ear=0.30, average_ear=0.30)
 
-        # Decide closure condition
-        if self.both_eyes_required and left_contour is not None and right_contour is not None:
-            is_closed = (left_ear <= self.closed_threshold) and (right_ear <= self.closed_threshold)
-            avg_ear = (left_ear + right_ear) / 2.0
-        else:
-            avg_ear = (left_ear + right_ear) / 2.0
-            is_closed = avg_ear <= self.closed_threshold
+        left_ear = self._compute_ear_from_indices(landmarks, LEFT_EYE_INDICES)
+        right_ear = self._compute_ear_from_indices(landmarks, RIGHT_EYE_INDICES)
+        avg_ear = (left_ear + right_ear) / 2.0
 
+        is_closed = avg_ear <= self.closed_threshold
         blink_detected = False
         duration = 0.0
 
-        # State Machine
         if self.eye_state == "OPEN":
             if is_closed:
-                # Transition OPEN -> CLOSED
                 self.eye_state = "CLOSED"
                 self.closed_start_time = now
 
         elif self.eye_state == "CLOSED":
             if not is_closed:
-                # Transition CLOSED -> OPEN (Eyes have reopened)
                 self.eye_state = "OPEN"
                 if self.closed_start_time is not None:
                     duration = now - self.closed_start_time
-                    time_since_last_blink = now - self.last_blink_time
+                    time_since_last = now - self.last_blink_time
 
-                    # Validate valid blink window and cooldown
-                    if (self.min_duration <= duration <= self.max_duration) and (time_since_last_blink >= self.cooldown):
+                    if (self.min_duration <= duration <= self.max_duration) and (time_since_last >= self.cooldown):
                         blink_detected = True
                         self.last_blink_time = now
 

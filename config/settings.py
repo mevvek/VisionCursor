@@ -1,6 +1,6 @@
 """
 config/settings.py
-Central configuration file for VisionCursor.
+Central configuration file for VISION CURSOR.
 """
 
 import os
@@ -21,7 +21,6 @@ class CalibrationConfig:
     grid_cols: int = 3
     screen_margin_ratio: float = 0.10
     calibration_file_path: str = os.path.join(os.path.dirname(__file__), "calibration.json")
-    calibration_file: str = os.path.join(os.path.dirname(__file__), "calibration.json")
 
 @dataclass
 class GazeConfig:
@@ -33,22 +32,29 @@ class GazeConfig:
 
 @dataclass
 class EyeTrackingConfig:
-    # EAR Thresholds
-    ear_closed_threshold: float = 0.21        # EAR <= 0.21 closed
-    ear_open_threshold: float = 0.25          # EAR >= 0.25 open
-    min_blink_duration: float = 0.06          # 60ms minimum
-    max_blink_duration: float = 1.20          # 1.2 sec maximum (lambe blink bhi pakdega)
-    blink_cooldown: float = 0.20              # Cooldown between clicks
-    both_eyes_required: bool = True           # Accidental winks reject karega
-    enable_blink_click: bool = True           # Blink = Left Mouse Click ON!
+    ear_closed_threshold: float = 0.22
+    ear_open_threshold: float = 0.26
+    # --- FLEXIBLE DURATION ---
+    # 0.20s se quick intentional second blink bhi drop nahi hoga
+    min_blink_duration: float = 0.20          
+    max_blink_duration: float = 1.20          
+    blink_cooldown: float = 0.10
+    both_eyes_required: bool = True
+
+@dataclass
+class GestureConfig:
+    # --- RELAXED DOUBLE BLINK WINDOW ---
+    double_blink_min_interval: float = 0.12   # Rapid tap allow karega
+    decision_window_max: float = 1.45         # 1.45s ka aaram se pura waqt milega 2nd blink ke liye
+    gesture_cooldown: float = 0.45            # Action confirm hone ke baad reset
 
 @dataclass
 class CursorConfig:
     control_enabled_on_startup: bool = False
-    smoothing_alpha: float = 0.22             # Stabilized smoothing (jitter khatam)
-    deadzone_px: float = 7.0                  # Micro head shakes ko freeze karega
-    range_x: float = 0.13                     # Horizontal sensitivity
-    range_y: float = 0.10                     # Vertical sensitivity
+    smoothing_alpha: float = 0.22
+    deadzone_px: float = 7.0
+    range_x: float = 0.13
+    range_y: float = 0.10
 
 @dataclass
 class AppConfig:
@@ -56,6 +62,7 @@ class AppConfig:
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     gaze: GazeConfig = field(default_factory=GazeConfig)
     eye: EyeTrackingConfig = field(default_factory=EyeTrackingConfig)
+    gesture: GestureConfig = field(default_factory=GestureConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
 
 CONFIG = AppConfig()
