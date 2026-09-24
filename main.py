@@ -1,84 +1,29 @@
 """
-main.py - Phase 3 Verification
-Integrates camera, face/iris tracking, and gaze direction estimation with visual radar.
-Zero cursor control / No PyAutoGUI.
+main.py - Phase 4 Calibration Verification
+Integrates 9-point Fullscreen Calibration with live Gaze-to-Screen coordinate mapping.
+Physical mouse cursor remains untouched.
 """
 
-import cv2
 import sys
+import cv2
 import numpy as np
+import pyautogui  # Used ONLY to read screen resolution safely
+
 from config.settings import CONFIG
 from camera.camera_manager import CameraManager
 from vision.face_tracker import FaceTracker
-from gaze.gaze_estimator import GazeEstimator, GazeResult
-
-def draw_visual_overlay(frame, tracking_result):
-    """Draws eye contours and iris markers."""
-    if not tracking_result.face_detected:
-        return frame
-
-    if tracking_result.left_eye:
-        cv2.polylines(frame, [tracking_result.left_eye.contour_points], isClosed=True, color=(255, 255, 0), thickness=1)
-    if tracking_result.right_eye:
-        cv2.polylines(frame, [tracking_result.right_eye.contour_points], isClosed=True, color=(255, 255, 0), thickness=1)
-
-    for iris in [tracking_result.left_iris, tracking_result.right_iris]:
-        if iris:
-            cv2.polylines(frame, [iris.points], isClosed=True, color=(0, 255, 120), thickness=1)
-            cv2.circle(frame, iris.center, 3, (0, 0, 255), -1)
-
-    return frame
-
-def draw_gaze_radar(frame, gaze_res: GazeResult, pos=(500, 30), size=(110, 110)):
-    """Draws a mini 2D radar box in the top-right showing real-time iris travel."""
-    x0, y0 = pos
-    w, h = size
-
-    # Background radar box
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x0, y0), (x0 + w, y0 + h), (25, 25, 25), -1)
-    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
-    cv2.rectangle(frame, (x0, y0), (x0 + w, y0 + h), (100, 100, 100), 1)
-
-    # Crosshairs
-    cx = x0 + w // 2
-    cy = y0 + h // 2
-    cv2.line(frame, (cx, y0 + 10), (cx, y0 + h - 10), (60, 60, 60), 1)
-    cv2.line(frame, (x0 + 10, cy), (x0 + w - 10, cy), (60, 60, 60), 1)
-
-    # Normalized gaze dot
-    dot_x = int(x0 + np.clip(gaze_res.smooth_x, 0.05, 0.95) * w)
-    dot_y = int(y0 + np.clip(gaze_res.smooth_y, 0.05, 0.95) * h)
-
-    # Color dot based on direction
-    dot_color = (0, 255, 255) if gaze_res.direction == "CENTER" else (0, 120, 255)
-    cv2.circle(frame, (dot_x, dot_y), 6, dot_color, -1)
-    cv2.putText(frame, "Gaze Radar", (x0 + 12, y0 + h + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
-
-def draw_hud(frame, fps: float, gaze_res: GazeResult):
-    """Draws top-left telemetry panel."""
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (10, 10), (260, 175), (20, 20, 20), -1)
-    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
-
-    cv2.putText(frame, "VisionCursor [Phase 3]", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    cv2.putText(frame, f"FPS: {fps:.1f}", (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-    # Prominent Gaze Output
-    dir_color = (0, 255, 0) if gaze_res.direction == "CENTER" else (0, 200, 255)
-    cv2.putText(frame, f"Gaze: {gaze_res.direction}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.75, dir_color, 2)
-
-    cv2.putText(frame, f"X (Norm): {gaze_res.smooth_x:.2f}", (20, 112), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
-    cv2.putText(frame, f"Y (Norm): {gaze_res.smooth_y:.2f}", (20, 132), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
-    cv2.putText(frame, f"Confidence: {gaze_res.confidence}", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 1)
-
-    cv2.putText(frame, "Press 'q' to exit", (20, frame.shape[0] - 15),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+from gaze.gaze_estimator import GazeEstimator
+from gaze.calibration import CalibrationManager
+from ui.calibration_window import CalibrationWindow
 
 def main():
     print("=" * 60)
-    print("VisionCursor: Initializing Phase 3 (Gaze Direction Detection)...")
+    print("VisionCursor: Initializing Phase 4 (Gaze Calibration System)...")
     print("=" * 60)
+
+    # Detect primary display dimensions
+    screen_w, screen_h = pyautogui.size()
+    print(f"[DISPLAY] Detected Primary Screen Resolution: {screen_w} x {screen_h}")
 
     cam = CameraManager(
         source=CONFIG.camera.device_id,
@@ -93,7 +38,16 @@ def main():
 
     tracker = FaceTracker()
     gaze_estimator = GazeEstimator()
-    print("[OK] Face tracker and Gaze estimator ready.")
+    calib_mgr = CalibrationManager(screen_w, screen_h)
+    calib_ui = CalibrationWindow(calib_mgr)
+
+    calib_ui.open()
+    print("\n[INSTRUCTIONS]:")
+    print(" - Look at the Fullscreen Calibration window.")
+    print(" - Press 'c' to begin the 9-point calibration.")
+    print(" - Keep your gaze steady on each dot as it turns from Orange to Green.")
+    print(" - Press 'ESC' to exit calibration or cancel anytime.")
+    print(" - PHYSICAL MOUSE CURSOR WILL NOT MOVE.\n")
 
     try:
         while True:
@@ -101,22 +55,45 @@ def main():
             if not success:
                 break
 
-            tracking_result = tracker.process_frame(frame)
-            gaze_result = gaze_estimator.estimate_gaze(tracking_result)
+            tracking_res = tracker.process_frame(frame)
+            gaze_res = gaze_estimator.estimate_gaze(tracking_res)
 
-            frame = draw_visual_overlay(frame, tracking_result)
-            draw_hud(frame, cam.current_fps, gaze_result)
-            draw_gaze_radar(frame, gaze_result)
+            # Update calibration state machine with raw iris features
+            calib_state = calib_mgr.update(gaze_res.raw_x, gaze_res.raw_y)
 
-            cv2.imshow("VisionCursor - Phase 3 Gaze Detection", frame)
+            # Predict screen position if calibrated (Visual confirmation only)
+            predicted_pt = None
+            if calib_mgr.is_calibrated:
+                predicted_pt = calib_mgr.map_gaze_to_screen(gaze_res.smooth_x, gaze_res.smooth_y)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            # Render full-screen calibration UI
+            ui_frame = calib_ui.render(predicted_pt)
+            cv2.imshow(calib_ui.window_name, ui_frame)
+
+            # Small diagnostic preview in camera window
+            cv2.putText(frame, f"Calibration: {calib_state}", (20, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, f"Gaze: ({gaze_res.raw_x:.2f}, {gaze_res.raw_y:.2f})", (20, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            cv2.imshow("VisionCursor - Camera Preview", frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC key
+                if calib_mgr.state in ["STABILIZING", "COLLECTING"]:
+                    calib_mgr.cancel_calibration()
+                else:
+                    break
+            elif key == ord('c'):
+                calib_mgr.start_calibration()
+            elif key == ord('q'):
                 break
+
     finally:
+        calib_ui.close()
         tracker.close()
         cam.release()
         cv2.destroyAllWindows()
-        print("\n[SUCCESS] Phase 3 cleanly terminated.")
+        print("\n[SUCCESS] Phase 4 completed cleanly.")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,84 @@
+{
+    "screen_width": 1920,
+    "screen_height": 1080,
+    "bounds": {
+        "gaze_min_x": 0.5,
+        "gaze_max_x": 0.5,
+        "gaze_min_y": 0.412,
+        "gaze_max_y": 0.471
+    },
+    "points": [
+        {
+            "screen_norm_x": 0.1,
+            "screen_norm_y": 0.1,
+            "screen_px_x": 191,
+            "screen_px_y": 107,
+            "gaze_x": 0.5,
+            "gaze_y": 0.471
+        },
+        {
+            "screen_norm_x": 0.5,
+            "screen_norm_y": 0.1,
+            "screen_px_x": 959,
+            "screen_px_y": 107,
+            "gaze_x": 0.5,
+            "gaze_y": 0.431
+        },
+        {
+            "screen_norm_x": 0.9,
+            "screen_norm_y": 0.1,
+            "screen_px_x": 1727,
+            "screen_px_y": 107,
+            "gaze_x": 0.5,
+            "gaze_y": 0.438
+        },
+        {
+            "screen_norm_x": 0.1,
+            "screen_norm_y": 0.5,
+            "screen_px_x": 191,
+            "screen_px_y": 539,
+            "gaze_x": 0.5,
+            "gaze_y": 0.412
+        },
+        {
+            "screen_norm_x": 0.5,
+            "screen_norm_y": 0.5,
+            "screen_px_x": 959,
+            "screen_px_y": 539,
+            "gaze_x": 0.5,
+            "gaze_y": 0.425
+        },
+        {
+            "screen_norm_x": 0.9,
+            "screen_norm_y": 0.5,
+            "screen_px_x": 1727,
+            "screen_px_y": 539,
+            "gaze_x": 0.5,
+            "gaze_y": 0.425
+        },
+        {
+            "screen_norm_x": 0.1,
+            "screen_norm_y": 0.9,
+            "screen_px_x": 191,
+            "screen_px_y": 971,
+            "gaze_x": 0.5,
+            "gaze_y": 0.412
+        },
+        {
+            "screen_norm_x": 0.5,
+            "screen_norm_y": 0.9,
+            "screen_px_x": 959,
+            "screen_px_y": 971,
+            "gaze_x": 0.5,
+            "gaze_y": 0.433
+        },
+        {
+            "screen_norm_x": 0.9,
+            "screen_norm_y": 0.9,
+            "screen_px_x": 1727,
+            "screen_px_y": 971,
+            "gaze_x": 0.5,
+            "gaze_y": 0.419
+        }
+    ]
+}

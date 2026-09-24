@@ -3,6 +3,7 @@ config/settings.py
 Central configuration file for VisionCursor.
 """
 
+import os
 from dataclasses import dataclass, field
 
 @dataclass
@@ -13,21 +14,23 @@ class CameraConfig:
     fps: int = 30
 
 @dataclass
+class CalibrationConfig:
+    stabilization_delay_sec: float = 0.8     # Time to settle eyes before recording
+    sample_count: int = 25                  # Frames to average per point
+    grid_rows: int = 3                      # 3x3 = 9 calibration points
+    grid_cols: int = 3
+    screen_margin_ratio: float = 0.10       # 10% margin from display boundaries
+    calibration_file_path: str = os.path.join(os.path.dirname(__file__), "calibration.json")
+    calibration_file: str = os.path.join(os.path.dirname(__file__), "calibration.json")
+
+@dataclass
 class GazeConfig:
     # Normalized iris ratio boundaries (0.0 to 1.0)
-    # Looking Right moves iris towards outer right corner
-    # Looking Left moves iris towards outer left corner
     horizontal_left_thresh: float = 0.42    # x <= 0.42 -> LOOKING LEFT
     horizontal_right_thresh: float = 0.58   # x >= 0.58 -> LOOKING RIGHT
-
-    # Looking Up moves iris towards top eyelid
-    # Looking Down moves iris towards lower eyelid
     vertical_up_thresh: float = 0.38        # y <= 0.38 -> LOOKING UP
     vertical_down_thresh: float = 0.65      # y >= 0.65 -> LOOKING DOWN
-
-    # Smoothing factor (alpha) for Exponential Moving Average
-    # 0.1 = very smooth/slight delay, 0.4 = responsive/mild jitter
-    smoothing_factor: float = 0.25
+    smoothing_factor: float = 0.25          # EMA smoothing factor
 
 @dataclass
 class EyeTrackingConfig:
@@ -48,6 +51,7 @@ class CursorConfig:
 @dataclass
 class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
+    calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     gaze: GazeConfig = field(default_factory=GazeConfig)
     eye: EyeTrackingConfig = field(default_factory=EyeTrackingConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
