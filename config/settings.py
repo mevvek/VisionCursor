@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CameraConfig:
-    device_id: int = 0                  # 0: Default laptop webcam
-    width: int = 640                    # 640x480 for real-time 30+ FPS
+    device_id: int = 0
+    width: int = 640
     height: int = 480
     fps: int = 30
 
@@ -32,21 +32,23 @@ class GazeConfig:
     smoothing_factor: float = 0.25
 
 @dataclass
-class CursorConfig:
-    control_enabled_on_startup: bool = False   # Safe startup: OFF by default
-    smoothing_alpha: float = 0.22             # EMA weight for target cursor (0.15 - 0.35)
-    movement_threshold_px: float = 6.0        # Ignore small eye tremors < 6 px
-    max_cursor_step_px: float = 85.0          # Max pixels cursor can jump per frame
-    emergency_pause_key: str = "ctrl+shift+p"
+class EyeTrackingConfig:
+    # EAR Thresholds
+    ear_closed_threshold: float = 0.21        # EAR <= 0.21 closed
+    ear_open_threshold: float = 0.25          # EAR >= 0.25 open
+    min_blink_duration: float = 0.06          # 60ms minimum
+    max_blink_duration: float = 1.20          # 1.2 sec maximum (lambe blink bhi pakdega)
+    blink_cooldown: float = 0.20              # Cooldown between clicks
+    both_eyes_required: bool = True           # Accidental winks reject karega
+    enable_blink_click: bool = True           # Blink = Left Mouse Click ON!
 
 @dataclass
-class EyeTrackingConfig:
-    ear_closed_threshold: float = 0.20
-    ear_open_threshold: float = 0.25
-    min_blink_duration: float = 0.05
-    max_blink_duration: float = 0.35
-    double_blink_max_interval: float = 0.45
-    click_cooldown: float = 0.8
+class CursorConfig:
+    control_enabled_on_startup: bool = False
+    smoothing_alpha: float = 0.22             # Stabilized smoothing (jitter khatam)
+    deadzone_px: float = 7.0                  # Micro head shakes ko freeze karega
+    range_x: float = 0.13                     # Horizontal sensitivity
+    range_y: float = 0.10                     # Vertical sensitivity
 
 @dataclass
 class AppConfig:

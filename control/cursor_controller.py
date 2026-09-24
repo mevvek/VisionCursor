@@ -1,11 +1,12 @@
 """
 control/cursor_controller.py
-Smooth and responsive cursor controller based on nose-anchor navigation.
-Corrected for natural front-camera orientation.
+Smooth and jitter-free cursor controller with micro-deadzone stabilization.
 """
 
 from typing import Tuple, Optional
+import math
 import pyautogui
+from config.settings import CONFIG
 
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE = 0.001
@@ -15,16 +16,17 @@ class CursorController:
         self.screen_w = screen_w
         self.screen_h = screen_h
 
-        # Sensitivity box: kitna head tilt karne par edge tak jaye
-        self.range_x = 0.12
-        self.range_y = 0.09
+        cfg = getattr(CONFIG, "cursor", None)
+        self.range_x = getattr(cfg, "range_x", 0.13)
+        self.range_y = getattr(cfg, "range_y", 0.10)
+        self.alpha = getattr(cfg, "smoothing_alpha", 0.22)
+        self.deadzone_px = getattr(cfg, "deadzone_px", 7.0)
 
         self.center_x: Optional[float] = None
         self.center_y: Optional[float] = None
 
         self.smooth_x: Optional[float] = None
         self.smooth_y: Optional[float] = None
-        self.alpha = 0.35  # Smooth and snappy
 
         self.is_enabled: bool = False
 
@@ -48,29 +50,33 @@ class CursorController:
         if self.center_x is None:
             self.recenter(norm_pt)
 
-        # FRONT WEBCAM FIX:
-        # Looking left tilts face to your left, which moves camera pixel to the left (-dx)
-        # So: screen_x moves left (subtracted), screen_y moves down/up naturally
+        # Deviation from center
         dx = norm_pt[0] - self.center_x
         dy = norm_pt[1] - self.center_y
 
         target_norm_x = 0.5 + (dx / (self.range_x * 2.0))
         target_norm_y = 0.5 + (dy / (self.range_y * 2.0))
 
-        # Clamp inside boundaries
         target_norm_x = max(0.0, min(1.0, target_norm_x))
         target_norm_y = max(0.0, min(1.0, target_norm_y))
 
         raw_px_x = target_norm_x * (self.screen_w - 1)
         raw_px_y = target_norm_y * (self.screen_h - 1)
 
-        # Exponential Moving Average Smoothing
-        if self.smooth_x is None:
+        # First frame initialization
+        if self.smooth_x is None or self.smooth_y is None:
             self.smooth_x = raw_px_x
             self.smooth_y = raw_px_y
-        else:
-            self.smooth_x = self.alpha * raw_px_x + (1.0 - self.alpha) * self.smooth_x
-            self.smooth_y = self.alpha * raw_px_y + (1.0 - self.alpha) * self.smooth_y
+            return int(self.smooth_x), int(self.smooth_y)
+
+        # Micro-tremor Deadzone: If head moved less than deadzone_px, freeze cursor
+        dist = math.hypot(raw_px_x - self.smooth_x, raw_px_y - self.smooth_y)
+        if dist < self.deadzone_px:
+            return int(round(self.smooth_x)), int(round(self.smooth_y))
+
+        # Heavy stabilization smoothing
+        self.smooth_x = self.alpha * raw_px_x + (1.0 - self.alpha) * self.smooth_x
+        self.smooth_y = self.alpha * raw_px_y + (1.0 - self.alpha) * self.smooth_y
 
         final_x = int(round(self.smooth_x))
         final_y = int(round(self.smooth_y))
