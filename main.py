@@ -1,31 +1,27 @@
 """
-main.py - Phase 2 Verification
-Integrates camera, face, eye, and iris tracking with a live visual debug overlay.
-No cursor movement or PyAutoGUI actions are executed.
+main.py - Phase 3 Verification
+Integrates camera, face/iris tracking, and gaze direction estimation with visual radar.
+Zero cursor control / No PyAutoGUI.
 """
 
 import cv2
 import sys
+import numpy as np
 from config.settings import CONFIG
 from camera.camera_manager import CameraManager
 from vision.face_tracker import FaceTracker
+from gaze.gaze_estimator import GazeEstimator, GazeResult
 
 def draw_visual_overlay(frame, tracking_result):
-    """Draws face oval, eye contours, iris markers, and diagnostic HUD on the frame."""
+    """Draws eye contours and iris markers."""
     if not tracking_result.face_detected:
         return frame
 
-    # 1. Subtle Face Oval (Dark grey/blue)
-    if tracking_result.face_oval_points is not None:
-        cv2.polylines(frame, [tracking_result.face_oval_points], isClosed=True, color=(80, 80, 80), thickness=1)
-
-    # 2. Eye Contours (Cyan)
     if tracking_result.left_eye:
         cv2.polylines(frame, [tracking_result.left_eye.contour_points], isClosed=True, color=(255, 255, 0), thickness=1)
     if tracking_result.right_eye:
         cv2.polylines(frame, [tracking_result.right_eye.contour_points], isClosed=True, color=(255, 255, 0), thickness=1)
 
-    # 3. Iris Contours & Center Markers (Red center + Green border)
     for iris in [tracking_result.left_iris, tracking_result.right_iris]:
         if iris:
             cv2.polylines(frame, [iris.points], isClosed=True, color=(0, 255, 120), thickness=1)
@@ -33,37 +29,55 @@ def draw_visual_overlay(frame, tracking_result):
 
     return frame
 
-def draw_hud(frame, fps: float, tracking_result):
-    """Draws real-time diagnostic telemetry in the top-left corner."""
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (10, 10), (250, 160), (20, 20, 20), -1)
-    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+def draw_gaze_radar(frame, gaze_res: GazeResult, pos=(500, 30), size=(110, 110)):
+    """Draws a mini 2D radar box in the top-right showing real-time iris travel."""
+    x0, y0 = pos
+    w, h = size
 
-    cv2.putText(frame, "VisionCursor [Phase 2]", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+    # Background radar box
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + w, y0 + h), (25, 25, 25), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+    cv2.rectangle(frame, (x0, y0), (x0 + w, y0 + h), (100, 100, 100), 1)
+
+    # Crosshairs
+    cx = x0 + w // 2
+    cy = y0 + h // 2
+    cv2.line(frame, (cx, y0 + 10), (cx, y0 + h - 10), (60, 60, 60), 1)
+    cv2.line(frame, (x0 + 10, cy), (x0 + w - 10, cy), (60, 60, 60), 1)
+
+    # Normalized gaze dot
+    dot_x = int(x0 + np.clip(gaze_res.smooth_x, 0.05, 0.95) * w)
+    dot_y = int(y0 + np.clip(gaze_res.smooth_y, 0.05, 0.95) * h)
+
+    # Color dot based on direction
+    dot_color = (0, 255, 255) if gaze_res.direction == "CENTER" else (0, 120, 255)
+    cv2.circle(frame, (dot_x, dot_y), 6, dot_color, -1)
+    cv2.putText(frame, "Gaze Radar", (x0 + 12, y0 + h + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+
+def draw_hud(frame, fps: float, gaze_res: GazeResult):
+    """Draws top-left telemetry panel."""
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (10, 10), (260, 175), (20, 20, 20), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+
+    cv2.putText(frame, "VisionCursor [Phase 3]", (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     cv2.putText(frame, f"FPS: {fps:.1f}", (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    face_status = "Detected" if tracking_result.face_detected else "Not Detected"
-    face_color = (0, 255, 0) if tracking_result.face_detected else (0, 0, 255)
-    cv2.putText(frame, f"Face: {face_status}", (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.5, face_color, 1)
+    # Prominent Gaze Output
+    dir_color = (0, 255, 0) if gaze_res.direction == "CENTER" else (0, 200, 255)
+    cv2.putText(frame, f"Gaze: {gaze_res.direction}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.75, dir_color, 2)
 
-    left_eye_status = "Detected" if tracking_result.left_eye else "None"
-    right_eye_status = "Detected" if tracking_result.right_eye else "None"
-    cv2.putText(frame, f"Left Eye: {left_eye_status}", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-    cv2.putText(frame, f"Right Eye: {right_eye_status}", (20, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-
-    iris_status = "Detected" if (tracking_result.left_iris and tracking_result.right_iris) else "None"
-    cv2.putText(frame, f"Iris: {iris_status}", (20, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 120), 1)
-
-    if tracking_result.face_count > 1:
-        cv2.putText(frame, f"Faces: {tracking_result.face_count} (Primary Selected)", (20, 153),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
+    cv2.putText(frame, f"X (Norm): {gaze_res.smooth_x:.2f}", (20, 112), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
+    cv2.putText(frame, f"Y (Norm): {gaze_res.smooth_y:.2f}", (20, 132), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
+    cv2.putText(frame, f"Confidence: {gaze_res.confidence}", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 120), 1)
 
     cv2.putText(frame, "Press 'q' to exit", (20, frame.shape[0] - 15),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
 
 def main():
     print("=" * 60)
-    print("VisionCursor: Initializing Phase 2 (Face, Eye & Iris Tracking)...")
+    print("VisionCursor: Initializing Phase 3 (Gaze Direction Detection)...")
     print("=" * 60)
 
     cam = CameraManager(
@@ -74,24 +88,27 @@ def main():
     )
 
     if not cam.start():
-        print("[ERROR] Camera initialization failed.")
+        print("[ERROR] Camera failed to start.")
         sys.exit(1)
 
     tracker = FaceTracker()
-    print("[OK] Face, Eye, and Iris tracking initialized.")
+    gaze_estimator = GazeEstimator()
+    print("[OK] Face tracker and Gaze estimator ready.")
 
     try:
         while True:
             success, frame = cam.read_frame()
             if not success:
-                print("[WARNING] Frame capture dropped.")
                 break
 
-            result = tracker.process_frame(frame)
-            frame = draw_visual_overlay(frame, result)
-            draw_hud(frame, cam.current_fps, result)
+            tracking_result = tracker.process_frame(frame)
+            gaze_result = gaze_estimator.estimate_gaze(tracking_result)
 
-            cv2.imshow("VisionCursor - Phase 2 Tracker", frame)
+            frame = draw_visual_overlay(frame, tracking_result)
+            draw_hud(frame, cam.current_fps, gaze_result)
+            draw_gaze_radar(frame, gaze_result)
+
+            cv2.imshow("VisionCursor - Phase 3 Gaze Detection", frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -99,7 +116,7 @@ def main():
         tracker.close()
         cam.release()
         cv2.destroyAllWindows()
-        print("\n[SUCCESS] Phase 2 terminated cleanly.")
+        print("\n[SUCCESS] Phase 3 cleanly terminated.")
 
 if __name__ == "__main__":
     main()
