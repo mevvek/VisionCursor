@@ -1,14 +1,13 @@
 """
 gaze/calibration.py
-Collects 9-point iris landmarks, calculates calibration mapping, and persists JSON data.
-No cursor movement.
+Direct proportional mapping for Gaze to Screen space.
 """
 
 import json
 import os
 import time
 from dataclasses import dataclass, asdict
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 import numpy as np
 from config.settings import CONFIG
 
@@ -26,54 +25,43 @@ class CalibrationManager:
         self.screen_w = screen_w
         self.screen_h = screen_h
         self.cfg = getattr(CONFIG, "calibration", None)
-        
-        # Robust fallback configurations
-        self.stabilization_delay_sec = getattr(self.cfg, "stabilization_delay_sec", 0.8)
-        self.sample_count = getattr(self.cfg, "sample_count", 25)
-        self.grid_rows = getattr(self.cfg, "grid_rows", 3)
-        self.grid_cols = getattr(self.cfg, "grid_cols", 3)
-        self.screen_margin_ratio = getattr(self.cfg, "screen_margin_ratio", 0.10)
-        
-        self.calib_file = getattr(
-            self.cfg, "calibration_file_path", 
-            getattr(self.cfg, "calibration_file", os.path.join(os.path.dirname(__file__), "..", "config", "calibration.json"))
-        )
+
+        self.stabilization_delay_sec = 0.7
+        self.sample_count = 15
+        self.grid_rows = 3
+        self.grid_cols = 3
+        self.screen_margin_ratio = 0.10
+
+        self.calib_file = os.path.join(os.path.dirname(__file__), "..", "config", "calibration.json")
 
         self.points: List[CalibrationPoint] = []
         self.current_idx: int = 0
-
-        # State tracking: IDLE, STABILIZING, COLLECTING, COMPLETED
         self.state: str = "IDLE"
         self.state_start_time: float = 0.0
         self.current_samples: List[Tuple[float, float]] = []
 
-        # Mapping bounds
+        # Baseline ranges
         self.is_calibrated: bool = False
-        self.gaze_min_x: float = 0.0
-        self.gaze_max_x: float = 1.0
-        self.gaze_min_y: float = 0.0
-        self.gaze_max_y: float = 1.0
+        self.gaze_min_x: float = 0.38
+        self.gaze_max_x: float = 0.62
+        self.gaze_min_y: float = 0.35
+        self.gaze_max_y: float = 0.65
 
-        # Try loading existing calibration if present
         self.load_calibration()
 
     def start_calibration(self):
-        """Prepares 9-point grid and initializes collection sequence."""
         self.points = self._generate_9_points()
         self.current_idx = 0
         self.current_samples = []
         self.state = "STABILIZING"
         self.state_start_time = time.time()
-        print(f"[CALIBRATION] Started 9-point sequence for display: {self.screen_w}x{self.screen_h}")
+        print(f"[CALIBRATION] Starting 9-point calibration...")
 
     def cancel_calibration(self):
-        """Cancels current sequence without corrupting previous valid calibration."""
         self.state = "IDLE"
         self.current_samples = []
-        print("[CALIBRATION] Sequence cancelled by user.")
 
     def update(self, raw_gaze_x: float, raw_gaze_y: float) -> str:
-        """State machine update called on each camera frame."""
         if self.state not in ["STABILIZING", "COLLECTING"]:
             return self.state
 
@@ -90,7 +78,6 @@ class CalibrationManager:
             self.current_samples.append((raw_gaze_x, raw_gaze_y))
 
             if len(self.current_samples) >= self.sample_count:
-                # Compute median to reject micro-flutter
                 arr = np.array(self.current_samples)
                 med_x = float(np.median(arr[:, 0]))
                 med_y = float(np.median(arr[:, 1]))
@@ -110,7 +97,6 @@ class CalibrationManager:
         return self.state
 
     def _finalize_calibration(self):
-        """Calculates mapping bounds and saves to JSON."""
         all_gx = [p.gaze_x for p in self.points]
         all_gy = [p.gaze_y for p in self.points]
 
@@ -121,33 +107,38 @@ class CalibrationManager:
 
         self.is_calibrated = True
         self.save_calibration()
-        print("[CALIBRATION] Sequence successfully completed and saved.")
 
     def map_gaze_to_screen(self, gaze_x: float, gaze_y: float) -> Tuple[int, int]:
-        """Maps live gaze coordinates to screen pixel coordinates (Without moving cursor)."""
-        if not self.is_calibrated:
-            return self.screen_w // 2, self.screen_h // 2
+        """Direct, highly sensitive mapping to guarantee full screen traversal."""
+        # Agar calibration nahi bhi hui ho ya hui ho, hum eye ke actual 0.40 - 0.60 range ko 
+        # Screen ke 0 to 1920 me amplify kar rahe hain:
+        min_x = self.gaze_min_x if self.is_calibrated else 0.42
+        max_x = self.gaze_max_x if self.is_calibrated else 0.58
+        min_y = self.gaze_min_y if self.is_calibrated else 0.38
+        max_y = self.gaze_max_y if self.is_calibrated else 0.62
 
-        # Normalize relative to user's calibrated gaze extremes
-        span_x = max(self.gaze_max_x - self.gaze_min_x, 0.001)
-        span_y = max(self.gaze_max_y - self.gaze_min_y, 0.001)
+        span_x = max(max_x - min_x, 0.05)
+        span_y = max(max_y - min_y, 0.05)
 
-        norm_sx = (gaze_x - self.gaze_min_x) / span_x
-        norm_sy = (gaze_y - self.gaze_min_y) / span_y
+        # Ratio: 0.0 (Far Left) to 1.0 (Far Right)
+        norm_x = (gaze_x - min_x) / span_x
+        norm_y = (gaze_y - min_y) / span_y
 
-        norm_sx = float(np.clip(norm_sx, 0.0, 1.0))
-        norm_sy = float(np.clip(norm_sy, 0.0, 1.0))
+        # 1.5x Multiplier to reach edges comfortably
+        norm_x = (norm_x - 0.5) * 1.6 + 0.5
+        norm_y = (norm_y - 0.5) * 1.6 + 0.5
 
-        px_x = int(norm_sx * (self.screen_w - 1))
-        px_y = int(norm_sy * (self.screen_h - 1))
+        norm_x = float(np.clip(norm_x, 0.0, 1.0))
+        norm_y = float(np.clip(norm_y, 0.0, 1.0))
+
+        px_x = int(norm_x * (self.screen_w - 1))
+        px_y = int(norm_y * (self.screen_h - 1))
 
         return px_x, px_y
 
     def _generate_9_points(self) -> List[CalibrationPoint]:
-        margin = self.screen_margin_ratio
-        xs = np.linspace(margin, 1.0 - margin, self.grid_cols)
-        ys = np.linspace(margin, 1.0 - margin, self.grid_rows)
-
+        xs = np.linspace(0.1, 0.9, 3)
+        ys = np.linspace(0.1, 0.9, 3)
         pts = []
         for y in ys:
             for x in xs:
@@ -170,7 +161,6 @@ class CalibrationManager:
         }
         with open(self.calib_file, "w") as f:
             json.dump(data, f, indent=4)
-        print(f"[CALIBRATION] Saved JSON configuration to: {self.calib_file}")
 
     def load_calibration(self) -> bool:
         if not os.path.exists(self.calib_file):
@@ -183,8 +173,6 @@ class CalibrationManager:
             self.gaze_min_y = data["bounds"]["gaze_min_y"]
             self.gaze_max_y = data["bounds"]["gaze_max_y"]
             self.is_calibrated = True
-            print(f"[CALIBRATION] Loaded existing calibration from {self.calib_file}")
             return True
-        except Exception as e:
-            print(f"[WARNING] Could not parse calibration file: {e}")
+        except Exception:
             return False

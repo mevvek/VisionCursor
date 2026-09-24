@@ -15,22 +15,29 @@ class CameraConfig:
 
 @dataclass
 class CalibrationConfig:
-    stabilization_delay_sec: float = 0.8     # Time to settle eyes before recording
-    sample_count: int = 25                  # Frames to average per point
-    grid_rows: int = 3                      # 3x3 = 9 calibration points
+    stabilization_delay_sec: float = 0.8
+    sample_count: int = 25
+    grid_rows: int = 3
     grid_cols: int = 3
-    screen_margin_ratio: float = 0.10       # 10% margin from display boundaries
+    screen_margin_ratio: float = 0.10
     calibration_file_path: str = os.path.join(os.path.dirname(__file__), "calibration.json")
     calibration_file: str = os.path.join(os.path.dirname(__file__), "calibration.json")
 
 @dataclass
 class GazeConfig:
-    # Normalized iris ratio boundaries (0.0 to 1.0)
-    horizontal_left_thresh: float = 0.42    # x <= 0.42 -> LOOKING LEFT
-    horizontal_right_thresh: float = 0.58   # x >= 0.58 -> LOOKING RIGHT
-    vertical_up_thresh: float = 0.38        # y <= 0.38 -> LOOKING UP
-    vertical_down_thresh: float = 0.65      # y >= 0.65 -> LOOKING DOWN
-    smoothing_factor: float = 0.25          # EMA smoothing factor
+    horizontal_left_thresh: float = 0.42
+    horizontal_right_thresh: float = 0.58
+    vertical_up_thresh: float = 0.38
+    vertical_down_thresh: float = 0.65
+    smoothing_factor: float = 0.25
+
+@dataclass
+class CursorConfig:
+    control_enabled_on_startup: bool = False   # Safe startup: OFF by default
+    smoothing_alpha: float = 0.22             # EMA weight for target cursor (0.15 - 0.35)
+    movement_threshold_px: float = 6.0        # Ignore small eye tremors < 6 px
+    max_cursor_step_px: float = 85.0          # Max pixels cursor can jump per frame
+    emergency_pause_key: str = "ctrl+shift+p"
 
 @dataclass
 class EyeTrackingConfig:
@@ -40,13 +47,6 @@ class EyeTrackingConfig:
     max_blink_duration: float = 0.35
     double_blink_max_interval: float = 0.45
     click_cooldown: float = 0.8
-
-@dataclass
-class CursorConfig:
-    smoothing_factor: float = 0.25
-    deadzone_radius_px: float = 8.0
-    dwell_time_seconds: float = 0.8
-    emergency_pause_key: str = "ctrl+shift+p"
 
 @dataclass
 class AppConfig:

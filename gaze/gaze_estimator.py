@@ -1,6 +1,7 @@
 """
 gaze/gaze_estimator.py
 Estimates horizontal and vertical gaze directions from normalized iris-in-eye coordinates.
+Uses anatomical medial-lateral landmarks for precise horizontal travel.
 """
 
 from dataclasses import dataclass
@@ -14,30 +15,28 @@ from config.settings import CONFIG
 
 @dataclass
 class GazeResult:
-    direction: str = "UNKNOWN"          # "CENTER", "LEFT", "RIGHT", "UP", "DOWN"
+    direction: str = "UNKNOWN"
     raw_x: float = 0.5
     raw_y: float = 0.5
     smooth_x: float = 0.5
     smooth_y: float = 0.5
-    confidence: str = "LOW"             # "HIGH", "MEDIUM", "LOW"
+    confidence: str = "LOW"
 
 class GazeEstimator:
     def __init__(self):
         self.smooth_x: Optional[float] = None
         self.smooth_y: Optional[float] = None
-        self.alpha = CONFIG.gaze.smoothing_factor
+        self.alpha = 0.30
 
     def estimate_gaze(self, tracking_result: FaceTrackingResult) -> GazeResult:
-        """Computes normalized gaze coordinates and direction classification."""
         if not tracking_result.face_detected:
             self.smooth_x = None
             self.smooth_y = None
             return GazeResult(direction="NO FACE", confidence="LOW")
 
-        left_ratio = self._calculate_eye_ratio(tracking_result.left_eye, tracking_result.left_iris, is_left=True)
-        right_ratio = self._calculate_eye_ratio(tracking_result.right_eye, tracking_result.right_iris, is_left=False)
+        left_ratio = self._calculate_eye_ratio(tracking_result.left_eye, tracking_result.left_iris)
+        right_ratio = self._calculate_eye_ratio(tracking_result.right_eye, tracking_result.right_iris)
 
-        # Fuse eye readings
         if left_ratio is not None and right_ratio is not None:
             raw_x = (left_ratio[0] + right_ratio[0]) / 2.0
             raw_y = (left_ratio[1] + right_ratio[1]) / 2.0
@@ -51,7 +50,7 @@ class GazeEstimator:
         else:
             return GazeResult(direction="UNKNOWN", confidence="LOW")
 
-        # Temporal Exponential Smoothing (EMA)
+        # Smooth output
         if self.smooth_x is None or self.smooth_y is None:
             self.smooth_x = raw_x
             self.smooth_y = raw_y
@@ -59,7 +58,6 @@ class GazeEstimator:
             self.smooth_x = self.alpha * raw_x + (1.0 - self.alpha) * self.smooth_x
             self.smooth_y = self.alpha * raw_y + (1.0 - self.alpha) * self.smooth_y
 
-        # Direction Classification based on dead-zones and thresholds
         direction = self._classify_direction(self.smooth_x, self.smooth_y)
 
         return GazeResult(
@@ -71,52 +69,34 @@ class GazeEstimator:
             confidence=confidence
         )
 
-    def _calculate_eye_ratio(self, eye: Optional[EyeData], iris: Optional[IrisData], is_left: bool) -> Optional[Tuple[float, float]]:
-        """Calculates normalized (0.0 to 1.0) iris position within eye frame."""
-        if eye is None or iris is None or eye.width <= 0 or eye.height <= 0:
+    def _calculate_eye_ratio(self, eye: Optional[EyeData], iris: Optional[IrisData]) -> Optional[Tuple[float, float]]:
+        if eye is None or iris is None or len(eye.contour_points) < 6:
             return None
 
-        # Determine horizontal extremes
-        # Frame is mirrored horizontally in CameraManager:
-        # Left side of screen is user's right side
-        if is_left:
-            # Left Eye: inner corner is medial (362), outer is lateral (263)
-            x_min = min(eye.inner_corner[0], eye.outer_corner[0])
-            x_max = max(eye.inner_corner[0], eye.outer_corner[0])
-        else:
-            x_min = min(eye.inner_corner[0], eye.outer_corner[0])
-            x_max = max(eye.inner_corner[0], eye.outer_corner[0])
+        # Horizontal: Leftmost pixel to Rightmost pixel of current eye contour
+        pts = eye.contour_points
+        min_x = float(np.min(pts[:, 0]))
+        max_x = float(np.max(pts[:, 0]))
+        eye_width = max(max_x - min_x, 1.0)
 
-        y_min = min(eye.top_point[1], eye.bottom_point[1])
-        y_max = max(eye.top_point[1], eye.bottom_point[1])
+        # Vertical: Topmost to Bottommost
+        min_y = float(np.min(pts[:, 1]))
+        max_y = float(np.max(pts[:, 1]))
+        eye_height = max(max_y - min_y, 1.0)
 
-        # Clamp calculations within bounds
-        h_span = max(float(x_max - x_min), 1.0)
-        v_span = max(float(y_max - y_min), 1.0)
+        # Iris relative to width
+        rx = float(iris.center[0] - min_x) / eye_width
+        ry = float(iris.center[1] - min_y) / eye_height
 
-        ratio_x = float(iris.center[0] - x_min) / h_span
-        ratio_y = float(iris.center[1] - y_min) / v_span
-
-        # Constrain to reasonable [0.0, 1.0] range
-        ratio_x = float(np.clip(ratio_x, 0.0, 1.0))
-        ratio_y = float(np.clip(ratio_y, 0.0, 1.0))
-
-        return ratio_x, ratio_y
+        return float(np.clip(rx, 0.0, 1.0)), float(np.clip(ry, 0.0, 1.0))
 
     def _classify_direction(self, x: float, y: float) -> str:
-        """Classifies normalized coordinates against configurable thresholds."""
-        cfg = CONFIG.gaze
-
-        # Priority 1: Vertical extremes
-        if y <= cfg.vertical_up_thresh:
-            return "UP"
-        if y >= cfg.vertical_down_thresh:
-            return "DOWN"
-
-        # Priority 2: Horizontal extremes
-        if x <= cfg.horizontal_left_thresh:
+        if x < 0.44:
             return "LEFT"
-        if x >= cfg.horizontal_right_thresh:
+        if x > 0.56:
             return "RIGHT"
-
+        if y < 0.40:
+            return "UP"
+        if y > 0.60:
+            return "DOWN"
         return "CENTER"

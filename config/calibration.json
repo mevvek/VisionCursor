@@ -4,8 +4,8 @@
     "bounds": {
         "gaze_min_x": 0.5,
         "gaze_max_x": 0.5,
-        "gaze_min_y": 0.412,
-        "gaze_max_y": 0.471
+        "gaze_min_y": 0.417,
+        "gaze_max_y": 0.5
     },
     "points": [
         {
@@ -14,7 +14,7 @@
             "screen_px_x": 191,
             "screen_px_y": 107,
             "gaze_x": 0.5,
-            "gaze_y": 0.471
+            "gaze_y": 0.456
         },
         {
             "screen_norm_x": 0.5,
@@ -22,7 +22,7 @@
             "screen_px_x": 959,
             "screen_px_y": 107,
             "gaze_x": 0.5,
-            "gaze_y": 0.431
+            "gaze_y": 0.452
         },
         {
             "screen_norm_x": 0.9,
@@ -30,7 +30,7 @@
             "screen_px_x": 1727,
             "screen_px_y": 107,
             "gaze_x": 0.5,
-            "gaze_y": 0.438
+            "gaze_y": 0.5
         },
         {
             "screen_norm_x": 0.1,
@@ -38,7 +38,7 @@
             "screen_px_x": 191,
             "screen_px_y": 539,
             "gaze_x": 0.5,
-            "gaze_y": 0.412
+            "gaze_y": 0.45
         },
         {
             "screen_norm_x": 0.5,
@@ -46,7 +46,7 @@
             "screen_px_x": 959,
             "screen_px_y": 539,
             "gaze_x": 0.5,
-            "gaze_y": 0.425
+            "gaze_y": 0.5
         },
         {
             "screen_norm_x": 0.9,
@@ -54,7 +54,7 @@
             "screen_px_x": 1727,
             "screen_px_y": 539,
             "gaze_x": 0.5,
-            "gaze_y": 0.425
+            "gaze_y": 0.5
         },
         {
             "screen_norm_x": 0.1,
@@ -62,7 +62,7 @@
             "screen_px_x": 191,
             "screen_px_y": 971,
             "gaze_x": 0.5,
-            "gaze_y": 0.412
+            "gaze_y": 0.5
         },
         {
             "screen_norm_x": 0.5,
@@ -70,7 +70,7 @@
             "screen_px_x": 959,
             "screen_px_y": 971,
             "gaze_x": 0.5,
-            "gaze_y": 0.433
+            "gaze_y": 0.447
         },
         {
             "screen_norm_x": 0.9,
@@ -78,7 +78,7 @@
             "screen_px_x": 1727,
             "screen_px_y": 971,
             "gaze_x": 0.5,
-            "gaze_y": 0.419
+            "gaze_y": 0.417
         }
     ]
 }

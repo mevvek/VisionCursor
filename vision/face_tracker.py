@@ -1,108 +1,131 @@
 """
 vision/face_tracker.py
-Face and Iris tracking using MediaPipe Tasks FaceLandmarker (Python 3.13+ / MediaPipe 1.0+ compatible).
+Extracts full face mesh landmarks, eyes, irises (with radius calculation), and nose-tip anchor.
+Fully compatible with Python 3.13 & MediaPipe Tasks API.
 """
 
 import os
-import urllib.request
+import inspect
+from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, List
-import cv2
+from typing import Optional, Tuple, List
 import numpy as np
-
 import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 
-from vision.landmarks import FACE_OVAL, denormalize_landmarks
 from vision.eye_tracker import EyeTracker, EyeData
-from vision.iris_tracker import IrisTracker, IrisData
+from vision.iris_tracker import IrisData
 
-MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MODEL_PATH = str(PROJECT_ROOT / "models" / "face_landmarker.task")
 
 @dataclass
 class FaceTrackingResult:
     face_detected: bool = False
-    face_count: int = 0
-    face_oval_points: Optional[np.ndarray] = None
+    raw_pixel_landmarks: Optional[List[Tuple[int, int]]] = None
     left_eye: Optional[EyeData] = None
     right_eye: Optional[EyeData] = None
     left_iris: Optional[IrisData] = None
     right_iris: Optional[IrisData] = None
+    nose_point: Optional[Tuple[float, float]] = None
+    nose_px: Optional[Tuple[int, int]] = None
 
 class FaceTracker:
-    def __init__(self, max_num_faces: int = 2, min_detection_confidence: float = 0.5, min_tracking_confidence: float = 0.5):
-        self._ensure_model_exists()
+    def __init__(self, model_path: Optional[str] = None):
+        target_model_path = model_path or DEFAULT_MODEL_PATH
 
-        base_options = mp_python.BaseOptions(model_asset_path=MODEL_PATH)
-        options = mp_vision.FaceLandmarkerOptions(
+        if not os.path.exists(target_model_path):
+            raise FileNotFoundError(f"[ERROR] Model file not found at: {target_model_path}")
+
+        base_options = python.BaseOptions(model_asset_path=target_model_path)
+        options = vision.FaceLandmarkerOptions(
             base_options=base_options,
-            running_mode=mp_vision.RunningMode.IMAGE,
-            num_faces=max_num_faces,
-            min_face_detection_confidence=min_detection_confidence,
-            min_face_presence_confidence=min_tracking_confidence,
             output_face_blendshapes=False,
-            output_facial_transformation_matrixes=False
+            output_facial_transformation_matrixes=False,
+            num_faces=1
         )
-        self.detector = mp_vision.FaceLandmarker.create_from_options(options)
+        self.landmarker = vision.FaceLandmarker.create_from_options(options)
         self.eye_tracker = EyeTracker()
-        self.iris_tracker = IrisTracker()
 
-    def _ensure_model_exists(self):
-        """Downloads the official MediaPipe face landmarker model if not present locally."""
-        if not os.path.exists(MODEL_PATH):
-            print(f"[INFO] Downloading official MediaPipe FaceLandmarker model to {MODEL_PATH}...")
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
-            print("[INFO] Model download complete.")
+    def _extract_eyes_safely(self, pixel_landmarks) -> Tuple[Optional[EyeData], Optional[EyeData]]:
+        try:
+            if hasattr(self.eye_tracker, "extract_eyes"):
+                return self.eye_tracker.extract_eyes(pixel_landmarks)
+            if hasattr(self.eye_tracker, "extract_left_eye") and hasattr(self.eye_tracker, "extract_right_eye"):
+                return (
+                    self.eye_tracker.extract_left_eye(pixel_landmarks),
+                    self.eye_tracker.extract_right_eye(pixel_landmarks)
+                )
+            if hasattr(self.eye_tracker, "extract_eye"):
+                sig = inspect.signature(self.eye_tracker.extract_eye)
+                params = list(sig.parameters.keys())
+                if len(params) >= 2:
+                    return (
+                        self.eye_tracker.extract_eye(pixel_landmarks, is_left=True),
+                        self.eye_tracker.extract_eye(pixel_landmarks, is_left=False)
+                    )
+                else:
+                    return self.eye_tracker.extract_eye(pixel_landmarks), None
+        except Exception:
+            return None, None
+        return None, None
+
+    def _build_iris_data(self, center_pt: Tuple[int, int], perimeter_pts: np.ndarray) -> IrisData:
+        """Calculates mean radius and creates IrisData safely."""
+        cx, cy = center_pt
+        dists = [np.hypot(px - cx, py - cy) for px, py in perimeter_pts]
+        avg_radius = float(np.mean(dists)) if dists else 5.0
+        
+        # Check constructor signature for optional arguments
+        try:
+            return IrisData(center=center_pt, points=perimeter_pts, radius=avg_radius)
+        except TypeError:
+            return IrisData(center=center_pt, points=perimeter_pts)
 
     def process_frame(self, frame: np.ndarray) -> FaceTrackingResult:
-        """Processes a single BGR frame and returns structured tracking data."""
         h, w, _ = frame.shape
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame = frame[:, :, ::-1]
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        results = self.detector.detect(mp_image)
+        result = self.landmarker.detect(mp_image)
 
-        if not results.face_landmarks:
-            return FaceTrackingResult(face_detected=False, face_count=0)
+        if not result.face_landmarks:
+            return FaceTrackingResult(face_detected=False)
 
-        face_count = len(results.face_landmarks)
-        primary_landmarks = self._select_primary_face(results.face_landmarks, w, h)
+        raw_landmarks = result.face_landmarks[0]
 
-        face_oval = denormalize_landmarks(primary_landmarks, FACE_OVAL, w, h)
-        left_eye = self.eye_tracker.extract_eye(primary_landmarks, w, h, is_left=True)
-        right_eye = self.eye_tracker.extract_eye(primary_landmarks, w, h, is_left=False)
-        left_iris = self.iris_tracker.extract_iris(primary_landmarks, w, h, is_left=True)
-        right_iris = self.iris_tracker.extract_iris(primary_landmarks, w, h, is_left=False)
+        # Landmark #4 is the physical nose tip
+        nose_lm = raw_landmarks[4]
+        nose_norm = (nose_lm.x, nose_lm.y)
+        nose_px = (int(nose_lm.x * w), int(nose_lm.y * h))
+
+        pixel_landmarks = [(int(lm.x * w), int(lm.y * h)) for lm in raw_landmarks]
+
+        left_eye, right_eye = self._extract_eyes_safely(pixel_landmarks)
+
+        # Iris landmarks (468: Left center, 473: Right center)
+        left_iris = None
+        right_iris = None
+        if len(pixel_landmarks) >= 478:
+            left_center = pixel_landmarks[468]
+            left_pts = np.array([pixel_landmarks[i] for i in [469, 470, 471, 472]], dtype=np.int32)
+            left_iris = self._build_iris_data(left_center, left_pts)
+
+            right_center = pixel_landmarks[473]
+            right_pts = np.array([pixel_landmarks[i] for i in [474, 475, 476, 477]], dtype=np.int32)
+            right_iris = self._build_iris_data(right_center, right_pts)
 
         return FaceTrackingResult(
             face_detected=True,
-            face_count=face_count,
-            face_oval_points=face_oval,
+            raw_pixel_landmarks=pixel_landmarks,
             left_eye=left_eye,
             right_eye=right_eye,
             left_iris=left_iris,
-            right_iris=right_iris
+            right_iris=right_iris,
+            nose_point=nose_norm,
+            nose_px=nose_px
         )
 
-    def _select_primary_face(self, multi_landmarks: List, frame_w: int, frame_h: int):
-        """Picks the largest face in the camera view to guarantee 1-user control."""
-        if len(multi_landmarks) == 1:
-            return multi_landmarks[0]
-
-        max_area = 0.0
-        selected = multi_landmarks[0]
-
-        for face in multi_landmarks:
-            pts = denormalize_landmarks(face, FACE_OVAL, frame_w, frame_h)
-            x, y, w, h = cv2.boundingRect(pts)
-            area = w * h
-            if area > max_area:
-                max_area = area
-                selected = face
-
-        return selected
-
     def close(self):
-        self.detector.close()
+        self.landmarker.close()
