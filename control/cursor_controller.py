@@ -1,15 +1,11 @@
 """
 control/cursor_controller.py
-Smooth and jitter-free cursor controller with micro-deadzone stabilization.
+Cursor stabilization module utilizing adaptive exponential smoothing and deadzone filtering.
 """
 
-from typing import Tuple, Optional
 import math
 import pyautogui
 from config.settings import CONFIG
-
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0.001
 
 class CursorController:
     def __init__(self, screen_w: int, screen_h: int):
@@ -17,73 +13,72 @@ class CursorController:
         self.screen_h = screen_h
 
         cfg = getattr(CONFIG, "cursor", None)
-        self.range_x = getattr(cfg, "range_x", 0.13)
-        self.range_y = getattr(cfg, "range_y", 0.10)
-        self.alpha = getattr(cfg, "smoothing_alpha", 0.22)
-        self.deadzone_px = getattr(cfg, "deadzone_px", 7.0)
+        self.base_alpha = getattr(cfg, "smoothing_alpha", 0.13)
+        self.deadzone = getattr(cfg, "deadzone_px", 11.0)
+        self.range_x = getattr(cfg, "range_x", 0.12)
+        self.range_y = getattr(cfg, "range_y", 0.065)
+        self.v_gain = getattr(cfg, "vertical_gain", 1.25)
 
-        self.center_x: Optional[float] = None
-        self.center_y: Optional[float] = None
+        self.center_x = None
+        self.center_y = None
+        self.prev_x = screen_w // 2
+        self.prev_y = screen_h // 2
+        self.is_enabled = False
 
-        self.smooth_x: Optional[float] = None
-        self.smooth_y: Optional[float] = None
-
-        self.is_enabled: bool = False
-
-    def toggle(self, current_norm_pt: Tuple[float, float]) -> bool:
+    def toggle(self, current_nose_point=None):
         self.is_enabled = not self.is_enabled
-        if self.is_enabled:
-            self.recenter(current_norm_pt)
+        if self.is_enabled and current_nose_point:
+            self.recenter(current_nose_point)
         return self.is_enabled
 
-    def recenter(self, current_norm_pt: Tuple[float, float]):
-        self.center_x = current_norm_pt[0]
-        self.center_y = current_norm_pt[1]
-        self.smooth_x = None
-        self.smooth_y = None
+    def recenter(self, current_nose_point):
+        self.center_x, self.center_y = current_nose_point
+        cur_x, cur_y = pyautogui.position()
+        self.prev_x = float(cur_x)
+        self.prev_y = float(cur_y)
 
-    def update_position(self, norm_pt: Tuple[float, float]) -> Tuple[int, int]:
-        if not self.is_enabled:
-            mx, my = pyautogui.position()
-            return int(mx), int(my)
+    def update_position(self, current_nose_point):
+        if not self.is_enabled or self.center_x is None:
+            return pyautogui.position()
 
-        if self.center_x is None:
-            self.recenter(norm_pt)
+        nx, ny = current_nose_point
 
-        # Deviation from center
-        dx = norm_pt[0] - self.center_x
-        dy = norm_pt[1] - self.center_y
+        dx = nx - self.center_x
+        dy = (ny - self.center_y) * self.v_gain
 
-        target_norm_x = 0.5 + (dx / (self.range_x * 2.0))
-        target_norm_y = 0.5 + (dy / (self.range_y * 2.0))
+        norm_target_x = 0.5 + (dx / (self.range_x * 2.0))
+        norm_target_y = 0.5 + (dy / (self.range_y * 2.0))
 
-        target_norm_x = max(0.0, min(1.0, target_norm_x))
-        target_norm_y = max(0.0, min(1.0, target_norm_y))
+        # Clamp normalized coordinates to stay within screen bounds
+        norm_target_x = max(0.0, min(1.0, norm_target_x))
+        norm_target_y = max(0.0, min(1.0, norm_target_y))
 
-        raw_px_x = target_norm_x * (self.screen_w - 1)
-        raw_px_y = target_norm_y * (self.screen_h - 1)
+        target_px_x = norm_target_x * self.screen_w
+        target_px_y = norm_target_y * self.screen_h
 
-        # First frame initialization
-        if self.smooth_x is None or self.smooth_y is None:
-            self.smooth_x = raw_px_x
-            self.smooth_y = raw_px_y
-            return int(self.smooth_x), int(self.smooth_y)
+        diff_x = target_px_x - self.prev_x
+        diff_y = target_px_y - self.prev_y
+        dist = math.hypot(diff_x, diff_y)
 
-        # Micro-tremor Deadzone: If head moved less than deadzone_px, freeze cursor
-        dist = math.hypot(raw_px_x - self.smooth_x, raw_px_y - self.smooth_y)
-        if dist < self.deadzone_px:
-            return int(round(self.smooth_x)), int(round(self.smooth_y))
+        # Micro-deadzone check to prevent jitter when holding target
+        if dist < self.deadzone:
+            smooth_x = self.prev_x
+            smooth_y = self.prev_y
+        else:
+            # Dynamic alpha scaling based on movement speed
+            speed_factor = min(1.0, (dist - self.deadzone) / 80.0)
+            effective_alpha = self.base_alpha + (0.12 * speed_factor)
 
-        # Heavy stabilization smoothing
-        self.smooth_x = self.alpha * raw_px_x + (1.0 - self.alpha) * self.smooth_x
-        self.smooth_y = self.alpha * raw_px_y + (1.0 - self.alpha) * self.smooth_y
+            smooth_x = self.prev_x + effective_alpha * diff_x
+            smooth_y = self.prev_y + effective_alpha * diff_y
 
-        final_x = int(round(self.smooth_x))
-        final_y = int(round(self.smooth_y))
+        smooth_x = max(0.0, min(float(self.screen_w - 1), smooth_x))
+        smooth_y = max(0.0, min(float(self.screen_h - 1), smooth_y))
 
-        try:
-            pyautogui.moveTo(final_x, final_y)
-        except Exception:
-            pass
+        int_x, int_y = int(smooth_x), int(smooth_y)
+        pyautogui.moveTo(int_x, int_y, _pause=False)
 
-        return final_x, final_y
+        self.prev_x = smooth_x
+        self.prev_y = smooth_y
+
+        return int_x, int_y
