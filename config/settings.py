@@ -48,17 +48,25 @@ class GestureConfig:
 @dataclass
 class CursorConfig:
     control_enabled_on_startup: bool = False
-    smoothing_alpha: float = 0.13             # Exponential smoothing factor
-    deadzone_px: float = 11.0                 # Suppresses micro-tremors when resting
-    range_x: float = 0.12                     # Horizontal motion sensitivity
-    range_y: float = 0.065                    # Vertical motion sensitivity
-    vertical_gain: float = 1.25               # Vertical reach multiplier for distance use
+    smoothing_alpha: float = 0.15
+    deadzone_px: float = 10.0
+    range_x: float = 0.12
+    range_y: float = 0.070
+    vertical_gain: float = 1.20
 
 @dataclass
 class ClickConfig:
-    gaze_stability_duration: float = 0.35     # Required fixation hold time before click validation
-    gaze_stability_radius_px: float = 40.0    # Target fixation radius in pixels
-    click_cooldown: float = 0.80              # Minimum delay between successive clicks
+    gaze_stability_duration: float = 0.35
+    gaze_stability_radius_px: float = 40.0
+    click_cooldown: float = 0.80
+
+@dataclass
+class ScrollConfig:
+    # Anchor Nudge Scroll Configuration
+    anchor_hold_time: float = 0.35            # Time to lock scroll anchor on target pane
+    nudge_threshold_px: float = 24.0          # Pixel delta from anchor to start scrolling
+    scroll_interval: float = 0.14             # Smooth reading pace
+    scroll_amount: int = 1                    # Single line tick per step
 
 @dataclass
 class AppConfig:
@@ -69,5 +77,6 @@ class AppConfig:
     gesture: GestureConfig = field(default_factory=GestureConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
     click: ClickConfig = field(default_factory=ClickConfig)
+    scroll: ScrollConfig = field(default_factory=ScrollConfig)
 
 CONFIG = AppConfig()
